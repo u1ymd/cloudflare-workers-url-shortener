@@ -9,7 +9,6 @@ const renderPage = (siteKey) => `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>URL短縮</title>
-<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 <style>
   :root { color-scheme: light dark; --accent: #f6821f; }
   * { box-sizing: border-box; }
@@ -28,7 +27,7 @@ const renderPage = (siteKey) => `<!doctype html>
   #result a { word-break: break-all; font-weight: 600; color: var(--accent); }
   #result .row { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
   #result button { padding: 8px 12px; font-size: .9rem; }
-  .cf-turnstile { margin-top: 12px; min-height: 65px; }
+  #turnstile { margin-top: 12px; }
   #error { margin-top: 12px; color: #d33; min-height: 1.2em; }
 </style>
 </head>
@@ -40,7 +39,7 @@ const renderPage = (siteKey) => `<!doctype html>
     <input id="target" type="url" placeholder="https://example.com/very/long/url" required autofocus>
     <button id="submit">短縮</button>
   </form>
-  <div class="cf-turnstile" data-sitekey="${escapeHtml(siteKey)}"></div>
+  <div id="turnstile" data-sitekey="${escapeHtml(siteKey)}"></div>
   <div id="error" role="alert"></div>
   <div id="result">
     <div class="row">
@@ -51,16 +50,44 @@ const renderPage = (siteKey) => `<!doctype html>
 </main>
 <script>
   const $ = (id) => document.getElementById(id);
+
+  // Turnstile は最初は常に表示し、1回短縮に成功したら「必要なときだけ表示」に切り替える
+  const siteKey = $("turnstile").dataset.sitekey;
+  let widgetId;
+  let compact = false;
+  function renderTurnstile() {
+    if (!$("turnstile")) {
+      const el = document.createElement("div");
+      el.id = "turnstile";
+      $("error").before(el);
+    }
+    widgetId = turnstile.render("#turnstile", {
+      sitekey: siteKey,
+      appearance: compact ? "interaction-only" : "always",
+    });
+  }
+  window.onTurnstileLoad = renderTurnstile;
+  function refreshTurnstile(succeeded) {
+    if (!window.turnstile || widgetId === undefined) return;
+    if (succeeded && !compact) {
+      compact = true;
+      turnstile.remove(widgetId);
+      renderTurnstile();
+    } else {
+      turnstile.reset(widgetId); // トークンは1回しか使えないので毎回取り直す
+    }
+  }
   $("form").addEventListener("submit", async (e) => {
     e.preventDefault();
     $("error").textContent = "";
     $("result").style.display = "none";
-    const token = window.turnstile?.getResponse();
+    const token = widgetId !== undefined ? turnstile.getResponse(widgetId) : "";
     if (!token) {
       $("error").textContent = "ロボットでないことの確認が終わるまでお待ちください";
       return;
     }
     $("submit").disabled = true;
+    let succeeded = false;
     try {
       const res = await fetch("/shorten", {
         method: "POST",
@@ -72,11 +99,12 @@ const renderPage = (siteKey) => `<!doctype html>
       $("short").textContent = $("short").href = data.short;
       $("result").style.display = "block";
       $("copy").textContent = "コピー";
+      succeeded = true;
     } catch (err) {
       $("error").textContent = err.message;
     } finally {
       $("submit").disabled = false;
-      window.turnstile?.reset(); // トークンは1回しか使えないので毎回取り直す
+      refreshTurnstile(succeeded);
     }
   });
   $("copy").addEventListener("click", async () => {
@@ -84,6 +112,7 @@ const renderPage = (siteKey) => `<!doctype html>
     $("copy").textContent = "コピーしました";
   });
 </script>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onTurnstileLoad" async defer></script>
 </body>
 </html>`;
 
