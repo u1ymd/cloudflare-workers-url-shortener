@@ -77,8 +77,19 @@ const renderPage = (siteKey) => `<!doctype html>
       turnstile.reset(widgetId); // トークンは1回しか使えないので毎回取り直す
     }
   }
+  // 短縮に成功したら、URLを書き換えるまでボタンを押せないようにする
+  let lastShortened = null;
+  function updateSubmit() {
+    const done = lastShortened !== null && $("target").value.trim() === lastShortened;
+    $("submit").disabled = done;
+    $("submit").textContent = done ? "短縮済み" : "短縮";
+    $("submit").style.cursor = done ? "default" : "";
+  }
+  $("target").addEventListener("input", updateSubmit);
   $("form").addEventListener("submit", async (e) => {
     e.preventDefault();
+    const target = $("target").value.trim();
+    if (target === lastShortened) return;
     $("error").textContent = "";
     $("result").style.display = "none";
     const token = widgetId !== undefined ? turnstile.getResponse(widgetId) : "";
@@ -92,7 +103,7 @@ const renderPage = (siteKey) => `<!doctype html>
       const res = await fetch("/shorten", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target: $("target").value.trim(), token }),
+        body: JSON.stringify({ target, token }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "エラーが発生しました");
@@ -100,10 +111,11 @@ const renderPage = (siteKey) => `<!doctype html>
       $("result").style.display = "block";
       $("copy").textContent = "コピー";
       succeeded = true;
+      lastShortened = target;
     } catch (err) {
       $("error").textContent = err.message;
     } finally {
-      $("submit").disabled = false;
+      updateSubmit();
       refreshTurnstile(succeeded);
     }
   });
