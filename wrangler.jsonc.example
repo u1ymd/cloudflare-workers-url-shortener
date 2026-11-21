@@ -16,7 +16,11 @@
 			"binding": "LINKS",
 			"id": "<YOUR_KV_NAMESPACE_ID>"
 		}
-	]
+	],
+	// Turnstile の Site Key（公開して良い値）。Secret Key は `npx wrangler secret put TURNSTILE_SECRET_KEY` で登録する
+	"vars": {
+		"TURNSTILE_SITE_KEY": "<YOUR_TURNSTILE_SITE_KEY>"
+	}
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

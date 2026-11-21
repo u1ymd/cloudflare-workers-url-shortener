@@ -1,12 +1,15 @@
 const ID_CHARS = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const ID_LENGTH = 6;
 
-const PAGE = `<!doctype html>
+const TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+
+const renderPage = (siteKey) => `<!doctype html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>URL短縮</title>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 <style>
   :root { color-scheme: light dark; --accent: #f6821f; }
   * { box-sizing: border-box; }
@@ -25,6 +28,7 @@ const PAGE = `<!doctype html>
   #result a { word-break: break-all; font-weight: 600; color: var(--accent); }
   #result .row { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
   #result button { padding: 8px 12px; font-size: .9rem; }
+  .cf-turnstile { margin-top: 12px; min-height: 65px; }
   #error { margin-top: 12px; color: #d33; min-height: 1.2em; }
 </style>
 </head>
@@ -36,6 +40,7 @@ const PAGE = `<!doctype html>
     <input id="target" type="url" placeholder="https://example.com/very/long/url" required autofocus>
     <button id="submit">短縮</button>
   </form>
+  <div class="cf-turnstile" data-sitekey="${escapeHtml(siteKey)}"></div>
   <div id="error" role="alert"></div>
   <div id="result">
     <div class="row">
@@ -50,12 +55,17 @@ const PAGE = `<!doctype html>
     e.preventDefault();
     $("error").textContent = "";
     $("result").style.display = "none";
+    const token = window.turnstile?.getResponse();
+    if (!token) {
+      $("error").textContent = "ロボットでないことの確認が終わるまでお待ちください";
+      return;
+    }
     $("submit").disabled = true;
     try {
       const res = await fetch("/shorten", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target: $("target").value.trim() }),
+        body: JSON.stringify({ target: $("target").value.trim(), token }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "エラーが発生しました");
@@ -66,6 +76,7 @@ const PAGE = `<!doctype html>
       $("error").textContent = err.message;
     } finally {
       $("submit").disabled = false;
+      window.turnstile?.reset(); // トークンは1回しか使えないので毎回取り直す
     }
   });
   $("copy").addEventListener("click", async () => {
@@ -75,6 +86,27 @@ const PAGE = `<!doctype html>
 </script>
 </body>
 </html>`;
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+// Turnstile のトークンを Cloudflare に問い合わせて検証する
+// https://developers.cloudflare.com/turnstile/get-started/server-side-validation/
+async function verifyTurnstile(token, secret, remoteip) {
+  if (typeof token !== "string" || !token || token.length > 2048) return false;
+  const form = new FormData();
+  form.append("secret", secret);
+  form.append("response", token);
+  if (remoteip) form.append("remoteip", remoteip);
+  try {
+    const res = await fetch(TURNSTILE_VERIFY_URL, { method: "POST", body: form });
+    const data = await res.json();
+    return data.success === true;
+  } catch {
+    return false;
+  }
+}
 
 function randomId() {
   const bytes = crypto.getRandomValues(new Uint8Array(ID_LENGTH));
@@ -100,7 +132,7 @@ export default {
     const url = new URL(req.url);
 
     if (req.method === "GET" && url.pathname === "/") {
-      return new Response(PAGE, {
+      return new Response(renderPage(env.TURNSTILE_SITE_KEY), {
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
     }
@@ -112,6 +144,14 @@ export default {
       const body = await req.json().catch(() => null);
       const target = parseTarget(body?.target, url.origin);
       if (!target) return jsonError("http:// か https:// で始まる有効なURLを入力してください", 400);
+
+      if (!env.TURNSTILE_SECRET_KEY) return jsonError("サーバーの設定が不足しています", 500);
+      const ok = await verifyTurnstile(
+        body.token,
+        env.TURNSTILE_SECRET_KEY,
+        req.headers.get("CF-Connecting-IP"),
+      );
+      if (!ok) return jsonError("ロボットでないことの確認に失敗しました。もう一度お試しください", 403);
 
       let id;
       for (let i = 0; i < 5; i++) {

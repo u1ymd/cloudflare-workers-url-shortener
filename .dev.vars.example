@@ -1,0 +1,5 @@
+# ローカル開発用。`cp .dev.vars.example .dev.vars` して使う
+# Cloudflare 公式のテスト用キー（ウィジェットもサーバー検証も必ず成功する）
+# https://developers.cloudflare.com/turnstile/troubleshooting/testing/
+TURNSTILE_SITE_KEY=1x00000000000000000000AA
+TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
